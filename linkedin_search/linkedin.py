@@ -1,7 +1,7 @@
 from linkedin_api import Linkedin as LinkedInBase
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, Literal
+from typing import Optional, Literal, AsyncGenerator, Any
 from dotenv import load_dotenv, find_dotenv
 import aiohttp
 import json
@@ -38,12 +38,19 @@ class LinkedIn:
         except IndexError:
             return None
 
-    async def profile(self, search_query: str) -> 'LinkedIn':
+    async def profile(self, search_query: str) -> AsyncGenerator[LinkedInProfile, None]:
         profiles = await self.profile_search(search_query)
         raw_result = []
         for profile in profiles.result:
             raw_result.append(self.api.get_profile(profile))
-        result = []
+        
+        def get_image(profile):
+            if profile.get("displayPictureUrl"):
+                img_size = profile.get("img_800_800") or profile.get("img_316_316") or profile.get("img_200_200") or profile.get("img_100_100", "")
+                return profile["displayPictureUrl"] + (img_size or "")
+            else:
+                return ""
+        
         for profile in raw_result:
             profile = LinkedInProfile(
                 **{
@@ -54,7 +61,7 @@ class LinkedIn:
                     "company": profile["experience"][0]["companyName"] if profile["experience"] else "",
                     "email": "",
                     "linkedin_url": f"https://www.linkedin.com/in/{profile['public_id']}",
-                    "pictureLink": "",
+                    "pictureLink": get_image(profile),
                     "dateInsert": datetime.now()
                 }
             )
@@ -97,5 +104,7 @@ class LinkedIn:
 if __name__ == "__main__":
     import asyncio
     linkedin = LinkedIn()
-    profile = asyncio.run(linkedin.profile('albin anthony aimleap'))
-    print(profile.result)
+    async def main():
+        async for profile in linkedin.profile('albin anthony aimleap'):
+            print(profile)
+    asyncio.run(main())
