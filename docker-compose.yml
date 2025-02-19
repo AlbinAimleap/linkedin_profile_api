@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - LINKEDIN_EMAIL=${LINKEDIN_EMAIL}
+      - LINKEDIN_PASSWORD=${LINKEDIN_PASSWORD}
+      - REDIS_HOST=redis
+    depends_on:
+      - redis
+    volumes:
+      - .:/app
+    command: uvicorn linkedin_search.api:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - app-network
+
+volumes:
+  redis_data:
+
+networks:
+  app-network:
+    driver: bridge

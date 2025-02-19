@@ -1,0 +1,101 @@
+from linkedin_api import Linkedin as LinkedInBase
+from pydantic import BaseModel
+from datetime import datetime
+from typing import Optional, Literal
+from dotenv import load_dotenv, find_dotenv
+import aiohttp
+import json
+import os
+
+load_dotenv(find_dotenv(".env"))
+
+class LinkedInProfile(BaseModel):
+    firstName: str
+    secondName: str
+    position: str
+    area: str
+    company: str
+    email: str = ""  
+    linkedin_url: str
+    pictureLink: str
+    dateInsert: datetime
+    dateUpdate: Optional[datetime] = None
+
+class LinkedIn:
+    def __init__(self):
+        self.api = LinkedInBase(
+            os.getenv("LINKEDIN_EMAIL"),
+            os.getenv("LINKEDIN_PASSWORD")
+        )
+    
+    def _format_print(self, data: dict) -> str:
+        return json.dumps(data, indent=4)
+    
+    def _extract_profile_links(self, items: list) -> list:
+        try:
+            raw = [item["link"] for item in items if "linkedin.com/in/" in item["link"]]
+            return [link.split("/in/")[1] for link in raw]
+        except IndexError:
+            return None
+
+    async def profile(self, search_query: str) -> 'LinkedIn':
+        profiles = await self.profile_search(search_query)
+        raw_result = []
+        for profile in profiles.result:
+            raw_result.append(self.api.get_profile(profile))
+        result = []
+        for profile in raw_result:
+            profile = LinkedInProfile(
+                **{
+                    "firstName": profile["firstName"],
+                    "secondName": profile["lastName"],
+                    "position": profile["headline"],
+                    "area": profile["locationName"],
+                    "company": profile["experience"][0]["companyName"] if profile["experience"] else "",
+                    "email": "",
+                    "linkedin_url": f"https://www.linkedin.com/in/{profile['public_id']}",
+                    "pictureLink": "",
+                    "dateInsert": datetime.now()
+                }
+            )
+        
+            yield profile
+    
+    async def company(self, search_query: str) -> 'LinkedIn':
+        self.result = self.api.get_company(search_query)
+        return self
+    
+    async def profile_search(self, query: str) -> 'LinkedIn':
+        url = "https://www.googleapis.com/customsearch/v1"
+        params = {
+            "key": "AIzaSyA-mlmp0dKE6ugubRqCc9SnYimr6MhqDZM",
+            "cx": "f4cfa251940ec47ce",
+            "q": query
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as response:
+                response.raise_for_status()
+                data = await response.json()
+                self.result = self._extract_profile_links(data["items"])
+        return self
+    
+    async def search(self, search_query: str, limit: int = 2, 
+              _type: Literal["profile", "company", "both"] = "both") -> 'LinkedIn':
+        type_mapping = {
+            "both": "PROFILE|COMPANY",
+            "company": "COMPANY",
+            "profile": "PROFILE"
+        }
+        params = {
+            "q": search_query,
+            "queryContext": f"List(spellCorrectionEnabled->true,relatedSearchesEnabled->true,kcardTypes->{type_mapping[_type]})"
+        }
+        self.result = self.api.search(params=params, limit=limit)
+        return self
+
+
+if __name__ == "__main__":
+    import asyncio
+    linkedin = LinkedIn()
+    profile = asyncio.run(linkedin.profile('albin anthony aimleap'))
+    print(profile.result)
