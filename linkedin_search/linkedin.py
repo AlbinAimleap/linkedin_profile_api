@@ -1,5 +1,5 @@
 from linkedin_api import Linkedin as LinkedInBase
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional, Literal, AsyncGenerator, Any
 from dotenv import load_dotenv, find_dotenv
@@ -20,6 +20,22 @@ class LinkedInProfile(BaseModel):
     pictureLink: str
     dateInsert: datetime
     dateUpdate: Optional[datetime] = None
+
+
+class LinkedInCompany(BaseModel):
+    name: str
+    linkedin_url: str
+    pictureLink: str
+    dateInsert: datetime
+    dateUpdate: Optional[datetime] = None
+    employees: Optional[str] = None
+    company_logo: Optional[str] = None
+    address: Optional[str] = None
+    description: Optional[str] = None
+    short_description: Optional[str] = None
+    phone: Optional[str] = None
+    founded_on: Optional[int] = None
+    
 
 class LinkedIn:
     def __init__(self):
@@ -68,9 +84,36 @@ class LinkedIn:
         
             yield profile
     
-    async def company(self, search_query: str) -> 'LinkedIn':
-        self.result = self.api.get_company(search_query)
-        return self
+    async def company(self, search_query: str) -> AsyncGenerator[LinkedInCompany, None]:
+        result = self.api.get_company(search_query)
+        
+        def get_image(profile):
+            if profile.get("logo") and profile.get("logo").get("image") and profile.get("logo").get("image").get("com.linkedin.common.VectorImage"):
+                vector_image = profile.get("logo").get("image").get("com.linkedin.common.VectorImage")
+                if vector_image.get("artifacts"):
+                    img_size = vector_image.get("artifacts")[-1].get("fileIdentifyingUrlPathSegment", "")
+                    return vector_image.get("rootUrl", "") + img_size
+            return ""
+        
+        def get_address(profile):
+            if profile.get("confirmedLocations"):
+                addresses = [i for i in profile.get("confirmedLocations") if i.get("headquarter") == "true"]
+                return addresses[0] if addresses else None
+            return None
+            
+        company = LinkedInCompany(
+            name=result.get("name", ""),
+            linkedin_url=f"https://www.linkedin.com/company/{search_query}",
+            pictureLink=result.get("logoUrl", ""),
+            dateInsert=datetime.now(),
+            company_logo=get_image(result),
+            address=get_address(result),
+            phone=result.get("phone", {}).get("number"),
+            short_description=result.get("tagline", ""),
+            description=result.get("description", ""),
+            founded_on=result.get("foundedOn", {}).get("year"),
+        )
+        yield company
     
     async def profile_search(self, query: str) -> 'LinkedIn':
         url = "https://www.googleapis.com/customsearch/v1"
@@ -105,6 +148,6 @@ if __name__ == "__main__":
     import asyncio
     linkedin = LinkedIn()
     async def main():
-        async for profile in linkedin.profile('albin anthony aimleap'):
-            print(profile)
+        async for company in linkedin.profile('albin antony aimleap'):
+            print(company)
     asyncio.run(main())

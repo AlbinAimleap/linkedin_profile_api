@@ -2,10 +2,10 @@ from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import StreamingResponse
 import uuid
 import json
-from linkedin_search.linkedin import LinkedIn, LinkedInProfile
+from linkedin_search.linkedin import LinkedIn, LinkedInProfile, LinkedInCompany
 from linkedin_search.tasks import Task
 from datetime import datetime
-from typing import AsyncGenerator, Dict, Any, List
+from typing import AsyncGenerator, Dict, Any, List, Literal, Union
 
 app = FastAPI()
 
@@ -15,47 +15,51 @@ class DateTimeEncoder(json.JSONEncoder):
             return obj.isoformat()
         return super().default(obj)
 
-async def get_search_history(query: str) -> List[LinkedInProfile]:
-    history = await Task.get_search_history(query)
+async def get_search_history(query: str, _type: str) -> List[Union[LinkedInProfile, LinkedInCompany]]:
+    history = await Task.get_search_history(f"{query}_{_type}")
     if history:
-        return [LinkedInProfile(**profile) for profile in json.loads(history)]
+        return [LinkedInProfile(**profile) if _type == "profile" else LinkedInCompany(**profile) for profile in json.loads(history)]
     return None
 
-async def save_search_history(query: str, profiles: List[LinkedInProfile]):
-    serialized_profiles = json.dumps([profile.model_dump() for profile in profiles], cls=DateTimeEncoder)
-    await Task.save_search_history(query, serialized_profiles)
+async def save_search_history(query: str, items: List[Union[LinkedInProfile, LinkedInCompany]], _type: str):
+    serialized_items = json.dumps([item.model_dump() for item in items], cls=DateTimeEncoder)
+    await Task.save_search_history(f"{query}_{_type}", serialized_items)
 
-async def search(query: str) -> AsyncGenerator[LinkedInProfile, None]:
-    history_profiles = await get_search_history(query)
-    if history_profiles:
-        for profile in history_profiles:
-            yield profile
+async def search(query: str, _type: str = "profile") -> AsyncGenerator[Union[LinkedInProfile, LinkedInCompany], None]:
+    history_items = await get_search_history(query, _type)
+    if history_items:
+        for item in history_items:
+            yield item
     else:
         linkedin = LinkedIn()
-        profiles = []
-        async for profile in linkedin.profile(query):
-            profiles.append(profile)
-            yield profile
-        await save_search_history(query, profiles)
+        items = []
+        if _type == "profile":
+            async for profile in linkedin.profile(query):
+                items.append(profile)
+                yield profile
+        else:
+            async for company in linkedin.company(query):
+                items.append(company)
+                yield company
+        await save_search_history(query, items, _type)
 
-async def create_streaming_response(query: str) -> AsyncGenerator[str, None]:
-    yield json.dumps({"status": "Scraping"}) + "\n"
-    async for profile in search(query):
-        yield json.dumps(profile.model_dump(), cls=DateTimeEncoder) + "\n"
+async def create_streaming_response(query: str, _type: Literal["profile", "company"]="profile") -> AsyncGenerator[str, None]:
+    async for item in search(query, _type):
+        yield json.dumps(item.model_dump(), cls=DateTimeEncoder) + "\n"
 
-@app.get("/stream", response_class=StreamingResponse, response_model=LinkedInProfile)
-async def get_profile_stream(query: str):
-    return StreamingResponse(create_streaming_response(query), media_type="text/event-stream")
+@app.get("/stream", response_class=StreamingResponse)
+async def get_profile_stream(query: str, _type: Literal["profile", "company"] = "profile"):
+    return StreamingResponse(create_streaming_response(query, _type), media_type="text/event-stream")
 
-@app.get("/search", response_model=List[LinkedInProfile])
-async def get_profile(query: str):
-    return [profile async for profile in search(query)]
+@app.get("/search")
+async def search_data(query: str, _type: Literal["profile", "company"] = "profile"):
+    return [item async for item in search(query, _type)]
 
-async def process_scraping_task(task_id: str, query: str) -> None:
+async def process_scraping_task(task_id: str, query: str, _type: str) -> None:
     await Task.save(task_id, "processing")
-    profiles = [profile async for profile in search(query)]
-    serialized_profiles = json.dumps([profile.model_dump() for profile in profiles], cls=DateTimeEncoder)
-    await Task.save(task_id, "completed", serialized_profiles)
+    items = [item async for item in search(query, _type)]
+    serialized_items = json.dumps([item.model_dump() for item in items], cls=DateTimeEncoder)
+    await Task.save(task_id, "completed", serialized_items)
 
 async def format_task_output(task: Dict[str, Any], task_id: str) -> Dict[str, Any]:
     output = json.loads(task.get('output')) if task.get('output') else None
@@ -66,10 +70,10 @@ async def format_task_output(task: Dict[str, Any], task_id: str) -> Dict[str, An
     }
 
 @app.get("/queue")
-async def queue_scraping(query: str, background_tasks: BackgroundTasks = None):
+async def queue_scraping(query: str, _type: Literal["profile", "company"] = "profile", background_tasks: BackgroundTasks = None):
     task_id = str(uuid.uuid4())
     await Task.save(task_id, "queued")
-    background_tasks.add_task(process_scraping_task, task_id, query)
+    background_tasks.add_task(process_scraping_task, task_id, query, _type)
     return {"task_id": task_id}
 
 @app.get("/tasks")
