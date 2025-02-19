@@ -33,15 +33,16 @@ GOOGLE_SEARCH_ENGINE_APIKEY = "your-google-api-key"
 ### Installation
 
 1. Clone the repository:
-
-git clone <repository-url>
+```bash
+git clone https://github.com/AlbinAimleap/linkedin_profile_api.git
+```
 cd linkedin-scraper
 
 
 2. Start the services using Docker Compose:
-
+```bash
 docker-compose up -d
-
+```
 
 The API will be available at `http://localhost:8000`
 
@@ -117,28 +118,28 @@ Key packages used:
 ### Local Setup
 
 1. Create a virtual environment:
-
+```bash
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
 .\venv\Scripts\activate  # Windows
-
+```
 
 2. Install dependencies:
-
+```bash
 pip install -r requirements.txt
-
+```
 
 3. Run the development server:
-
+```bash
 uvicorn linkedin_search.api:app --reload
-
+```
 
 ### Docker Development
 
 Build and run containers:
-
+```bash
 docker-compose up --build
-
+```
 
 ## Error Handling
 
@@ -162,14 +163,3 @@ Search results are cached in Redis to:
 - Proper error handling
 - Secure Redis configuration
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-[MIT License](LICENSE)
