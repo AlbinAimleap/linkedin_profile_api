@@ -58,7 +58,14 @@ class LinkedIn:
         profiles = await self.profile_search(search_query)
         raw_result = []
         for profile in profiles.result:
-            raw_result.append(self.api.get_profile(profile))
+            connection_message = f"""Hi, I came across your profile and I'm impressed by your experience. I'm interested in connecting with professionals in your field as I believe we could have valuable discussions about industry trends and collaborations. Looking forward to connecting!"""            
+            error = self.api.add_connection(profile, connection_message)
+            if error:
+                print(f"Failed to connect to {profile}: {error}")
+            try:
+                raw_result.append(self.api.get_profile(profile))
+            except Exception as e:
+                print(f"Failed to get profile {profile}: {e}")
         
         def get_image(profile):
             if profile.get("displayPictureUrl"):
@@ -67,13 +74,15 @@ class LinkedIn:
             else:
                 return ""
         
-        for profile in raw_result:
+        with open("linkedin_profiles.json", "w") as f:
+            json.dump(raw_result, f, indent=4)
+        for profile in raw_result:                
             profile = LinkedInProfile(
                 **{
                     "firstName": profile["firstName"],
                     "secondName": profile["lastName"],
-                    "position": profile["headline"],
-                    "area": profile["locationName"],
+                    "position": profile["experience"][0]["title"] if profile.get("experience") else profile["headline"],
+                    "area": profile["locationName"] if profile.get("locationName") else profile.get("geoCountryName", ""),
                     "company": profile["experience"][0]["companyName"] if profile["experience"] else "",
                     "email": "",
                     "linkedin_url": f"https://www.linkedin.com/in/{profile['public_id']}",
@@ -81,9 +90,8 @@ class LinkedIn:
                     "dateInsert": datetime.now()
                 }
             )
-        
-            yield profile
-    
+            yield profile    
+            
     async def company(self, search_query: str) -> AsyncGenerator[LinkedInCompany, None]:
         result = self.api.get_company(search_query)
         
