@@ -6,6 +6,8 @@ from dotenv import load_dotenv, find_dotenv
 import aiohttp
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
+from linkedin_search.serp import SearchOrchestrator, SerperDevService, GoogleCustomSearchService
 
 load_dotenv(find_dotenv(".env"))
 
@@ -43,55 +45,90 @@ class LinkedIn:
             os.getenv("LINKEDIN_EMAIL"),
             os.getenv("LINKEDIN_PASSWORD")
         )
+        self.search_orchestrator = SearchOrchestrator()
+        self.search_orchestrator.add_service(SerperDevService(os.getenv("SERPER_API_KEY")))
+        # self.search_orchestrator.add_service(GoogleCustomSearchService(os.getenv("GOOGLE_API_KEY")))
+        self.executor = ThreadPoolExecutor(max_workers=10)
     
     def _format_print(self, data: dict) -> str:
         return json.dumps(data, indent=4)
     
-    def _extract_profile_links(self, items: list) -> list:
+    def _process_profile(self, profile_url):
         try:
-            raw = [item["link"] for item in items if "linkedin.com/in/" in item["link"]]
-            return [link.split("/in/")[1] for link in raw]
-        except IndexError:
+            # Get profile first before attempting connection
+            profile_data = self.api.get_profile(profile_url)
+            if not profile_data:
+                print(f"No profile data found for {profile_url}")
+                return None
+            
+            # Only attempt connection if profile data exists    
+            connection_message = f"""Hi, I came across your profile and I'm impressed by your experience. I'm interested in connecting with professionals in your field as I believe we could have valuable discussions about industry trends and collaborations. Looking forward to connecting!"""            
+            try:
+                error = self.api.add_connection(profile_url, connection_message)
+                if error:
+                    print(f"Failed to connect to {profile_url}: {error}")
+            except Exception as e:
+                print(f"Connection request failed for {profile_url}: {e}")
+            
+            return profile_data
+        
+        except Exception as e:
+            print(f"Failed to process profile {profile_url}: {e}")
             return None
 
     async def profile(self, search_query: str) -> AsyncGenerator[LinkedInProfile, None]:
-        profiles = await self.profile_search(search_query)
-        raw_result = []
-        for profile in profiles.result:
-            connection_message = f"""Hi, I came across your profile and I'm impressed by your experience. I'm interested in connecting with professionals in your field as I believe we could have valuable discussions about industry trends and collaborations. Looking forward to connecting!"""            
-            error = self.api.add_connection(profile, connection_message)
-            if error:
-                print(f"Failed to connect to {profile}: {error}")
-            try:
-                raw_result.append(self.api.get_profile(profile))
-            except Exception as e:
-                print(f"Failed to get profile {profile}: {e}")
-        
-        def get_image(profile):
-            if profile.get("displayPictureUrl"):
-                img_size = profile.get("img_800_800") or profile.get("img_316_316") or profile.get("img_200_200") or profile.get("img_100_100", "")
-                return profile["displayPictureUrl"] + (img_size or "")
-            else:
-                return ""
-        
-        with open("linkedin_profiles.json", "w") as f:
-            json.dump(raw_result, f, indent=4)
-        for profile in raw_result:                
-            profile = LinkedInProfile(
-                **{
-                    "firstName": profile["firstName"],
-                    "secondName": profile["lastName"],
-                    "position": profile["experience"][0]["title"] if profile.get("experience") else profile["headline"],
-                    "area": profile["locationName"] if profile.get("locationName") else profile.get("geoCountryName", ""),
-                    "company": profile["experience"][0]["companyName"] if profile["experience"] else "",
-                    "email": "",
-                    "linkedin_url": f"https://www.linkedin.com/in/{profile['public_id']}",
-                    "pictureLink": get_image(profile),
-                    "dateInsert": datetime.now()
-                }
-            )
-            yield profile    
+        try:
+            profiles = await self.search_orchestrator.search(search_query)
+            if not profiles:
+                print(f"No profiles found for query: {search_query}")
+                return
             
+            raw_result = []
+            futures = [self.executor.submit(self._process_profile, profile) for profile in profiles]
+        
+            for future in futures:
+                try:
+                    result = future.result()
+                    if result:
+                        raw_result.append(result)
+                except Exception as e:
+                    print(f"Error processing future: {e}")
+                    continue
+
+            for profile in raw_result:
+                try:
+                    yield LinkedInProfile(
+                        firstName=profile.get("firstName", ""),
+                        secondName=profile.get("lastName", ""),
+                        position=profile.get("experience", [{}])[0].get("title", profile.get("headline", "")),
+                        area=profile.get("locationName", profile.get("geoCountryName", "")),
+                        company=profile.get("experience", [{}])[0].get("companyName", ""),
+                        email="",
+                        linkedin_url=f"https://www.linkedin.com/in/{profile.get('public_id', '')}",
+                        pictureLink=self._get_profile_image(profile),
+                        dateInsert=datetime.now()
+                    )
+                except Exception as e:
+                    print(f"Error creating LinkedInProfile: {e}")
+                    continue
+                
+        except Exception as e:
+            print(f"Profile search failed: {e}")
+            return
+
+    def _get_profile_image(self, profile: dict) -> str:
+        try:
+            if profile.get("displayPictureUrl"):
+                img_size = (profile.get("img_800_800") or 
+                        profile.get("img_316_316") or 
+                        profile.get("img_200_200") or 
+                        profile.get("img_100_100", ""))
+                return profile["displayPictureUrl"] + (img_size or "")
+            return ""
+        except Exception as e:
+            print(f"Error getting profile image: {e}")
+            return ""
+        
     async def company(self, search_query: str) -> AsyncGenerator[LinkedInCompany, None]:
         result = self.api.get_company(search_query)
         
@@ -122,34 +159,6 @@ class LinkedIn:
             founded_on=result.get("foundedOn", {}).get("year"),
         )
         yield company
-    
-    async def profile_search(self, query: str) -> 'LinkedIn':
-        url = "https://www.googleapis.com/customsearch/v1"
-        params = {
-            "key": "AIzaSyA-mlmp0dKE6ugubRqCc9SnYimr6MhqDZM",
-            "cx": "f4cfa251940ec47ce",
-            "q": query
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as response:
-                response.raise_for_status()
-                data = await response.json()
-                self.result = self._extract_profile_links(data["items"])
-        return self
-    
-    async def search(self, search_query: str, limit: int = 2, 
-              _type: Literal["profile", "company", "both"] = "both") -> 'LinkedIn':
-        type_mapping = {
-            "both": "PROFILE|COMPANY",
-            "company": "COMPANY",
-            "profile": "PROFILE"
-        }
-        params = {
-            "q": search_query,
-            "queryContext": f"List(spellCorrectionEnabled->true,relatedSearchesEnabled->true,kcardTypes->{type_mapping[_type]})"
-        }
-        self.result = self.api.search(params=params, limit=limit)
-        return self
 
 
 if __name__ == "__main__":

@@ -1,35 +1,69 @@
-import aioredis
+import sqlite3
+import json
 import os
+from pathlib import Path
 
-# Connect to Redis
-redis_client = aioredis.from_url(
-    f"redis://{os.getenv('REDIS_HOST', 'redis')}:6379/0",
-    decode_responses=True
-)
+# Create database directory if it doesn't exist
+db_dir = Path("data")
+db_dir.mkdir(exist_ok=True)
+
+# Connect to SQLite
+db_path = db_dir / "tasks.db"
+def get_db():
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# Initialize database
+with get_db() as conn:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY,
+            status TEXT,
+            output TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS search_history (
+            query TEXT PRIMARY KEY,
+            profiles TEXT
+        )
+    """)
 
 class Task:
     @staticmethod
-    async def save(task_id, status, output=None):
-        task_data = {
-            'id': task_id,
-            'status': status,
-            'output': output if output is not None else ''
-        }
-        await redis_client.hmset(f"task:{task_id}", task_data)
+    def save(task_id, status, output=None):
+        with get_db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO tasks (id, status, output) VALUES (?, ?, ?)",
+                (task_id, status, output if output is not None else '')
+            )
 
     @staticmethod
-    async def get(task_id):
-        return await redis_client.hgetall(f"task:{task_id}")
+    def get(task_id):
+        with get_db() as conn:
+            result = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            return dict(result) if result else {}
 
     @staticmethod
-    async def get_all_keys():
-        keys = await redis_client.keys("task:*")
-        return [key.replace("task:", "") for key in keys]
+    def get_all_keys():
+        with get_db() as conn:
+            results = conn.execute("SELECT id FROM tasks").fetchall()
+            return [result['id'] for result in results]
 
     @staticmethod
-    async def save_search_history(query: str, profiles: str):
-        await redis_client.set(f"search_history:{query}", profiles)
+    def save_search_history(query: str, profiles: str):
+        with get_db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO search_history (query, profiles) VALUES (?, ?)",
+                (query, profiles)
+            )
 
     @staticmethod
-    async def get_search_history(query: str):
-        return await redis_client.get(f"search_history:{query}")
+    def get_search_history(query: str):
+        with get_db() as conn:
+            result = conn.execute(
+                "SELECT profiles FROM search_history WHERE query = ?",
+                (query,)
+            ).fetchone()
+            return result['profiles'] if result else None
