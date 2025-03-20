@@ -7,7 +7,7 @@ import aiohttp
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
-from linkedin_search.serp import SearchOrchestrator, SerperDevService, GoogleCustomSearchService
+from serp import SearchOrchestrator, SerperDevService, GoogleCustomSearchService
 
 load_dotenv(find_dotenv(".env"))
 
@@ -55,22 +55,45 @@ class LinkedIn:
     
     def _process_profile(self, profile_url):
         try:
-            # Get profile first before attempting connection
-            profile_data = self.api.get_profile(profile_url)
-            if not profile_data:
-                print(f"No profile data found for {profile_url}")
+            if not profile_url:
+                print("Empty profile URL provided")
                 return None
+                    
+            # Clean up profile URL to get just the username/id
+            print(f"Processing profile URL: {profile_url}")
+            profile_id = profile_url.split('?')[0].split('/')[-1]
+            print(f"Extracted profile ID: {profile_id}")
             
-            # Only attempt connection if profile data exists    
-            connection_message = f"""Hi, I came across your profile and I'm impressed by your experience. I'm interested in connecting with professionals in your field as I believe we could have valuable discussions about industry trends and collaborations. Looking forward to connecting!"""            
             try:
-                error = self.api.add_connection(profile_url, connection_message)
-                if error:
-                    print(f"Failed to connect to {profile_url}: {error}")
+                profile_data = self.api.get_profile(profile_id)
+                if profile_data is None:
+                    print(f"API returned None for profile {profile_id}")
+                    return None
+                    
+                # Check if profile_data is a valid dictionary
+                if not isinstance(profile_data, dict):
+                    print(f"API returned non-dictionary data for {profile_id}: {type(profile_data)}, value: {profile_data}")
+                    return None
+                    
+                print(f"Successfully retrieved profile data for {profile_id}")
+                
+                # Only attempt connection if profile data exists    
+                connection_message = f"""Hi, I came across your profile and I'm impressed by your experience. I'm interested in connecting with professionals in your field as I believe we could have valuable discussions about industry trends and collaborations. Looking forward to connecting!"""            
+                try:
+                    error = self.api.add_connection(profile_id, connection_message)
+                    if error:
+                        print(f"Failed to connect to {profile_id}: {error}")
+                except Exception as e:
+                    print(f"Connection request failed for {profile_id}: {e}")
+                
+                return profile_data
+            except json.JSONDecodeError as je:
+                print(f"JSON decode error for {profile_id}: {je}")
+                print(f"Raw response content: {je.doc}...")  # Print first 100 chars of the response
+                return None
             except Exception as e:
-                print(f"Connection request failed for {profile_url}: {e}")
-            
-            return profile_data
+                print(f"API call failed for {profile_id}: {e}")
+                return None
         
         except Exception as e:
             print(f"Failed to process profile {profile_url}: {e}")
@@ -97,6 +120,9 @@ class LinkedIn:
 
             for profile in raw_result:
                 try:
+                    if not isinstance(profile, dict):
+                        continue
+                        
                     yield LinkedInProfile(
                         firstName=profile.get("firstName", ""),
                         secondName=profile.get("lastName", ""),

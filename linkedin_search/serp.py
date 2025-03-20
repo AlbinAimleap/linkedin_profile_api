@@ -33,9 +33,9 @@ class SerperDevService(SearchService):
     def _extract_profile_links(self, items: list) -> list:
         try:
             raw = [item["link"] for item in items if "linkedin.com/in/" in item["link"]]
-            return [link.split("/in/")[1] for link in raw]
+            return raw
         except (KeyError, IndexError):
-            return None
+            return []
         
     async def search(self, query: str):
         try:
@@ -47,7 +47,6 @@ class SerperDevService(SearchService):
             data = await self._make_request(self.url, method="POST", headers=headers, data=payload)
             return self._extract_profile_links(data.get("organic", []))
         except Exception as e:
-            print(f"SerperDev search failed: {e}")
             return []
     
     
@@ -60,7 +59,7 @@ class GoogleCustomSearchService(SearchService):
     def _extract_profile_links(self, items: list) -> list:
         try:
             raw = [item["link"] for item in items if "linkedin.com/in/" in item["link"]]
-            return [link.split("/in/")[1].split("/")[0] for link in raw]
+            return raw
         except IndexError:
             return None
 
@@ -88,20 +87,17 @@ class SearchOrchestrator:
         for service in self.search_services:
             try:
                 result = await service.search(query)
-                if result:
+                if result:  # Check if result is not None and not empty
                     results.extend(result)
             except Exception as e:
-                print(f"Search service failed: {e}")
                 continue
         return results
-
 if __name__ == "__main__":
     search_orchestrator = SearchOrchestrator()
     search_orchestrator.add_service(SerperDevService("802646ef2d9889ee214dab859536a8b12ee337fb"))
     # search_orchestrator.add_service(GoogleCustomSearchService("YOUR_API_KEY"))
     
     async def main():
-        result = await search_orchestrator.search("directors davienda site:linkedin.com/in")
-        print(result)
+        result = await search_orchestrator.search("directors davienda")
 
     asyncio.run(main())
