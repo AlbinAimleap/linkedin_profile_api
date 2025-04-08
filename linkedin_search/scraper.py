@@ -18,6 +18,11 @@ class Profile(BaseModel):
     company_linkedin_url: str
 
 
+class Error(BaseModel):
+    error: bool
+    message: str
+    status_code: int 
+
     
 async def get_profile(linkedin_url):
     url = "https://fresh-linkedin-profile-data.p.rapidapi.com/get-linkedin-profile-by-salesnavurl"
@@ -43,6 +48,8 @@ async def get_profile(linkedin_url):
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers, params=querystring) as response:
             data = await response.json()
+            if response.status == 429:
+                return Error(error=True, message=data.get("message"), status_code=response.status)
             try:
                 current_company = [i for i in data["data"]['experiences']][0]
             except KeyError:
