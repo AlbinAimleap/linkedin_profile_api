@@ -3,6 +3,10 @@ import json
 import asyncio
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 class SearchService(ABC):
     def __init__(self, api_key: str):
@@ -43,7 +47,7 @@ class SerperDevService(SearchService):
                 'X-API-KEY': self.api_key,
                 'Content-Type': 'application/json'
             }
-            payload = json.dumps({"q": f"{query} site:linkedin.com/in"})
+            payload = json.dumps({"q": f"{query} site:linkedin.com/in", "num": os.getenv("SEARCH_LIMIT")})
             data = await self._make_request(self.url, method="POST", headers=headers, data=payload)
             return self._extract_profile_links(data.get("organic", []))
         except Exception as e:

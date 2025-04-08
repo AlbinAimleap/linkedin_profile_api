@@ -5,7 +5,7 @@ from typing import Optional, AsyncGenerator, Dict, Any, List, Literal, Union
 import uuid
 import json
 from datetime import datetime
-from linkedin_search.scraper import LinkedInVoyagerAPI
+from linkedin_search.scraper import get_profile
 from linkedin_search.serp import SearchOrchestrator, SerperDevService
 from linkedin_search.tasks import Task
 from dotenv import load_dotenv
@@ -31,7 +31,6 @@ class SearchService:
     def __init__(self):
         self.orchestrator = SearchOrchestrator()
         self.serp_service = SerperDevService(api_key=os.getenv("SERPER_API_KEY"))
-        self.api = LinkedInVoyagerAPI()
         self.orchestrator.add_service(self.serp_service)
 
     def get_search_history(self, query: str, _type: str) -> List[Dict]:
@@ -54,33 +53,14 @@ class SearchService:
         
         for result in results:
             item = await self._process_result(result, _type)
-            items.append(item)
+            items.append(item.model_dump())
             yield item
             
         self.save_search_history(query, items, _type)
 
     async def _process_result(self, result: str, _type: str) -> Dict:
-        if _type == "profile":
-            if result.startswith('http'):
-                return self.api.get_profile_by_url(result)
-            else:
-                return self.api.get_profile_data(result)
-        else:
-            company = self.api.get_company_data(result)
-            return {
-                'name': company.name,
-                'linkedin_url': company.linkedin_url,
-                'pictureLink': company.pictureLink,
-                'dateInsert': company.dateInsert,
-                'dateUpdate': company.dateUpdate,
-                'employees': company.employees,
-                'company_logo': company.company_logo,
-                'address': company.address,
-                'description': company.description,
-                'short_description': company.short_description,
-                'phone': company.phone,
-                'founded_on': company.founded_on
-            }
+        return await get_profile(result)
+           
 
 class TaskManager:
     @staticmethod
