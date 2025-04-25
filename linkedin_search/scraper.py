@@ -1,6 +1,7 @@
 import aiohttp
 import asyncio
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Optional
 from dotenv import load_dotenv
 load_dotenv()
 import os
@@ -13,10 +14,9 @@ class Profile(BaseModel):
     linkedin_url: str
     image_url: str
     position: str
-    company_name: str
-    company_logo_url: str
-    company_linkedin_url: str
-
+    company_name: Optional[str] = Field(default="")
+    company_logo_url: Optional[str] = Field(default="")
+    company_linkedin_url: Optional[str] = Field(default="")
 
 class Error(BaseModel):
     error: bool
@@ -50,28 +50,62 @@ async def get_profile(linkedin_url):
             data = await response.json()
             if response.status == 429:
                 return Error(error=True, message=data.get("message"), status_code=response.status)
+            if not isinstance(data, dict) or not data or "data" not in data:
+                return Error(error=True, message="Invalid response format", status_code=response.status)
             try:
-                current_company = [i for i in data["data"]['experiences']][0]
-            except KeyError:
+                if not data.get("data"):
+                    return Error(error=True, message="No data returned from API", status_code=response.status)
+                experiences = data["data"].get('experiences', [])
+                current_company = experiences[0] if experiences else {}            
+            except (KeyError, TypeError):
                 current_company = {}
-            profile = Profile(
-                first_name=data["data"]['first_name'],
-                last_name=data["data"]['last_name'],
-                location=data["data"]['location'],
-                linkedin_url=data["data"]['linkedin_url'],
-                image_url=data["data"]['profile_image_url'],
-                position=current_company.get("title", ""),
+            try:
+                # Check if current_company is a dictionary before using .get()
+                company_name = ""
+                company_linkedin_url = ""
+                company_logo_url = ""
+                position = ""
                 
-                company_name=current_company.get("company", {}),
-                company_linkedin_url=current_company.get("company_linkedin_url", ""),
-                company_logo_url=current_company.get("company_logo_url", ""),
+                if isinstance(current_company, dict):
+                    position = current_company.get("title", "")
+                    company_data = current_company.get("company", {})
+                    if isinstance(company_data, dict):
+                        company_name = company_data.get("name", "")
+                    elif isinstance(company_data, str):
+                        company_name = company_data
+                    
+                    company_linkedin_url = current_company.get("company_linkedin_url", "")
+                    company_logo_url = current_company.get("company_logo_url", "")
                 
-            )
+                profile = Profile(
+                    first_name=data["data"]['first_name'],
+                    last_name=data["data"]['last_name'],
+                    location=data["data"]['location'],
+                    linkedin_url=data["data"]['linkedin_url'],
+                    image_url=data["data"]['profile_image_url'],
+                    position=position,
+                    company_name=company_name,
+                    company_linkedin_url=company_linkedin_url,
+                    company_logo_url=company_logo_url,
+                )
+                return profile
+            except KeyError as e:
+                return Error(error=True, message=f"Missing required field: {str(e)}", status_code=response.status)
 
-            return profile
+
+async def get_multiple_profiles(linkedin_urls):
+    tasks = []
+    for url in linkedin_urls:
+        tasks.append(get_profile(url))
+    return await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":
-    linkedin_url = "https://www.linkedin.com/in/albin-antony-435b1b236"
-    profile = asyncio.run(get_profile(linkedin_url))
-    print(profile)
+    linkedin_urls = [
+        "https://www.linkedin.com/in/albin-antony-435b1b236",
+        "https://www.linkedin.com/in/another-profile",
+        "https://www.linkedin.com/in/third-profile"
+    ]
+    profiles = asyncio.run(get_multiple_profiles(linkedin_urls))
+    for profile in profiles:
+        print(profile)

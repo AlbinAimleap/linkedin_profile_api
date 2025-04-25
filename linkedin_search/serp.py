@@ -47,7 +47,7 @@ class SerperDevService(SearchService):
                 'X-API-KEY': self.api_key,
                 'Content-Type': 'application/json'
             }
-            payload = json.dumps({"q": f"{query} site:linkedin.com/in", "num": os.getenv("SEARCH_LIMIT")})
+            payload = json.dumps({"q": f"{query} site:linkedin.com/in", "num": os.getenv("SEARCH_LIMIT", 20)})
             data = await self._make_request(self.url, method="POST", headers=headers, data=payload)
             return self._extract_profile_links(data.get("organic", []))
         except Exception as e:
@@ -103,5 +103,6 @@ if __name__ == "__main__":
     
     async def main():
         result = await search_orchestrator.search("directors davienda")
+        print(result)
 
     asyncio.run(main())
